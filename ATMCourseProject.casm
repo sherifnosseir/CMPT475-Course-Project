@@ -5,10 +5,44 @@ use Standard
 
 init Main
 
+universe Agents = {TillControl, CentralNetwork,CentralDatabase} 
+
+universe till = {till1, till2, till3}
+
+enum TillStatus = {Available, InUse, OutOfOrder}
+enum UserOperation = {CheckBalance, Withdraw, RequestStatement, LogOut}
+enum LoginStatus = {LoggedIn, LoggedOut, AccountLocked}
+
+function tillStatus: till -> TillStatus
+function userOperation: -> UserOperation
+function loginStatus(x): userLogin(t) -> LoginStatus //Not too sure about this one
+
 //Main Program
 rule Main =
 {
+	forall t in till do {
+		tillStatus(t) := Available
+	} 
+	program(self):=undef
+	program(tillControl):=@TillControl
+	program(CentralNetwork):=@CentralNetworkControl
+	program(CentralDatabase):=@CentralDatabaseControl
+}
+
+rule TillControl =
+{
 	
 }
+
+rule CentralNetworkControl
+{
+
+}
+
+rule CentralDatabaseControl
+{
+
+}
+
 
 
