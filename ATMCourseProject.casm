@@ -1,0 +1,14 @@
+/* CoreASM specification */
+CoreASM ATM
+
+use Standard
+
+init Main
+
+//Main Program
+rule Main =
+{
+	
+}
+
+
