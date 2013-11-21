@@ -11,17 +11,17 @@ universe Agents = {tillControl, centralNetwork, centralDatabase, observer, envir
 universe till = {till1, till2, till3}
 
 enum TillStatus = {Available, InUse, OutOfOrder}
- 
 enum UserOperation = {CheckBalance, Withdraw, RequestStatement, LogOut}
 enum LoginStatus = {LoggedIn, LoggedOut, AccountLocked}
 enum CardStatus = {Empty, Inserted, Remove}
 //enum DatabaseState = {Available, Unavailable}
 
 function tillStatus: till -> TillStatus
-function userOperation: -> UserOperation
+function userOperation: till -> UserOperation
 function cardStatus: till -> CardStatus
 function cardAttempts: till -> NUMBER
 function controlled pinNumber: till -> String
+function controlled mainMenu: -> SET
 //function loginStatus(x): userLogin(t) -> LoginStatus //Not too sure about this one
 //function databaseState: -> DatabaseState
 
@@ -34,29 +34,40 @@ rule Main =
 		cardAttempts(t) := 0
 	} 
 	
+	seqblock
+	mainMenu := {}
+	
+	forall u in UserOperation do
+		add u to mainMenu
+	endseqblock
+	
 	program(self):=undef
 	program(tillControl):=@TillControl
 //	program(CentralNetwork):=@CentralNetworkControl
 //	program(CentralDatabase):=@CentralDatabaseControl
 //	program(observer):=@ObserverProgram
-//	program(environment):=@EnvironmentProgram
+	program(environment):=@EnvironmentProgram
 }
 
 rule TillControl =
 {
-	forall t in till do {
-		if tillStatus(t) = Available then
-			if cardStatus(t) = Inserted then {
-				tillStatus(t) := InUse
+	forall t in till do
+	par
+		//Wait for card
+		if cardStatus(t) = Empty then
+			print t + " - Please insert card"
+		
+		//Till status changes after pin is inserted 
+		if cardStatus(t) = Inserted then
+			if tillStatus(t) = Available then
+			seqblock
 				ProcessLogin(t)
-			}
-			else {
-				print t + ": Insert Card Please"
-				if t = till1 then {
-					cardStatus(t) := Inserted
-				}
-			}
-	}
+			endseqblock
+			else
+				//Get Operation
+				if tillStatus(t) = InUse then
+					GetOperation(t)						
+	endpar
 }
 
 // Process input 
@@ -69,28 +80,60 @@ rule ProcessLogin(t) =
 		if (pinNumber(t) != "123") then 
 		seqblock
 			cardAttempts(t) := cardAttempts(t) + 1
-			if (cardAttempts(t) = 3) then {
-				//Too many tries, card is kept by till
+			//Too many tries, card is kept by till
+			if (cardAttempts(t) = 3) then 
 				KeepCard(t)
-			}
-			print "Invalid Pin\nAttempts so far: " + cardAttempts(t)
+			else
+				print t + ": Invalid Pin\nAttempts so far: " + cardAttempts(t)
 		endseqblock 
 		else 
+		seqblock
 			print "Good Pin"
+			tillStatus(t) := InUse
+		endseqblock
 	endseqblock
 
 rule KeepCard(t) =
-{
-	print "Card is kept by this ATM"
-}
+	par
+		ResetTill(t)
+		print "Card is kept by this ATM"
+	endpar
 
-rule resetATM(t) =
-{
-	cardAttempts(t) := 0
+rule ResetTill(t) =
+par
 	tillStatus(t) := Available
 	cardStatus(t) := Empty
+	cardAttempts(t) := 0
+	print "ATM is now available"
 	//Add card to list of cards not returned
-}
+endpar
+
+rule GetOperation(t) = 
+seqblock
+	userOperation(t) := toOperation(input(t + " - Select a service\n" + mainMenu))
+	if (userOperation(t) != undef) then par
+		if (userOperation(t) = CheckBalance) then
+			print "Your Balance is not important!"
+			//GetBalanceNetwork(t, userLogin(t))
+		if (userOperation(t) = Withdraw) then
+			print "All your base are belong to us"
+			//WithdrawNetwork(t, userLogin(t), userWithdrawAmount(t))
+		if (userOperation(t) = RequestStatement) then
+			print "A statement will be delivered to your house"
+			//RequestStatementNetwork(t, userLogin(t))
+		if (userOperation(t) = LogOut) then seqblock
+			print "Please take your card"
+			cardStatus(t) := Remove
+		endseqblock
+	endpar
+	else
+		print "Invalid Input"
+endseqblock
+
+rule toOperation(userInput) = 
+	return op in 
+		choose x in UserOperation with toString(x) = userInput do
+			op := x
 
 /*rule CentralNetworkControl =
 {
@@ -105,9 +148,22 @@ rule CentralDatabaseControl =
 rule ObserverProgram =
 {
 
-}
+} */
 
 rule EnvironmentProgram =
 {
-
-} */
+	forall t in till do
+	par
+		//Simulating user interaction
+		if t = till1 then
+		seqblock
+			if cardStatus(t) = Remove then seqblock
+				print "User has removed a card"
+				ResetTill(t)
+			endseqblock
+			if (tillStatus(t) = Available and cardStatus(t) = Empty) then
+				print "User has inserted a card"
+				cardStatus(t) := Inserted
+		endseqblock
+	endpar
+}
