@@ -2,47 +2,112 @@
 CoreASM ATM
 
 use Standard
+use IO
 
 init Main
 
-universe Agents = {TillControl, CentralNetwork,CentralDatabase} 
+universe Agents = {tillControl, centralNetwork, centralDatabase, observer, environment} 
 
 universe till = {till1, till2, till3}
 
 enum TillStatus = {Available, InUse, OutOfOrder}
+ 
 enum UserOperation = {CheckBalance, Withdraw, RequestStatement, LogOut}
 enum LoginStatus = {LoggedIn, LoggedOut, AccountLocked}
+enum CardStatus = {Empty, Inserted, Remove}
+//enum DatabaseState = {Available, Unavailable}
 
 function tillStatus: till -> TillStatus
 function userOperation: -> UserOperation
-function loginStatus(x): userLogin(t) -> LoginStatus //Not too sure about this one
+function cardStatus: till -> CardStatus
+function cardAttempts: till -> NUMBER
+function controlled pinNumber: till -> String
+//function loginStatus(x): userLogin(t) -> LoginStatus //Not too sure about this one
+//function databaseState: -> DatabaseState
 
 //Main Program
 rule Main =
 {
 	forall t in till do {
 		tillStatus(t) := Available
+		cardStatus(t) := Empty
+		cardAttempts(t) := 0
 	} 
+	
 	program(self):=undef
 	program(tillControl):=@TillControl
-	program(CentralNetwork):=@CentralNetworkControl
-	program(CentralDatabase):=@CentralDatabaseControl
+//	program(CentralNetwork):=@CentralNetworkControl
+//	program(CentralDatabase):=@CentralDatabaseControl
+//	program(observer):=@ObserverProgram
+//	program(environment):=@EnvironmentProgram
 }
 
 rule TillControl =
 {
+	forall t in till do {
+		if tillStatus(t) = Available then
+			if cardStatus(t) = Inserted then {
+				tillStatus(t) := InUse
+				ProcessLogin(t)
+			}
+			else {
+				print t + ": Insert Card Please"
+				if t = till1 then {
+					cardStatus(t) := Inserted
+				}
+			}
+	}
+}
+
+// Process input 
+rule ProcessLogin(t) = 
+	seqblock
+		pinNumber(t) := toString(input(t + " - Insert Pin Now"))
+		print t + ": inserted pin : " + pinNumber(t)
 	
+		//Hardcoded pin for now
+		if (pinNumber(t) != "123") then 
+		seqblock
+			cardAttempts(t) := cardAttempts(t) + 1
+			if (cardAttempts(t) = 3) then {
+				//Too many tries, card is kept by till
+				KeepCard(t)
+			}
+			print "Invalid Pin\nAttempts so far: " + cardAttempts(t)
+		endseqblock 
+		else 
+			print "Good Pin"
+	endseqblock
+
+rule KeepCard(t) =
+{
+	print "Card is kept by this ATM"
 }
 
-rule CentralNetworkControl
+rule resetATM(t) =
+{
+	cardAttempts(t) := 0
+	tillStatus(t) := Available
+	cardStatus(t) := Empty
+	//Add card to list of cards not returned
+}
+
+/*rule CentralNetworkControl =
 {
 
 }
 
-rule CentralDatabaseControl
+rule CentralDatabaseControl =
 {
 
 }
 
+rule ObserverProgram =
+{
 
+}
 
+rule EnvironmentProgram =
+{
+
+} */
