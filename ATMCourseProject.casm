@@ -1,11 +1,54 @@
+CoreASM ATM_System
 
+use Standard
+use Math
+use QueuePlugin
+
+universe ATM = {TillControl, CentralNetwork, CentralDatabase}
+universe Till = {Till1, Till2, Till3}
+universe Client = { Client1, Client2, Client3}
+
+universe Agents = {ATM_Controller, Network_Controller, user, observer}
+
+enum TillStatus = { Available, InUse, BeginProcessing, Processing }
+enum AccountStatus = { LoggedIn, LoggedOut, AccountLocked }
+enum UserOperation = { EnterPIN,CheckBalance, Withdraw, RequestStatement, LogOut, Standby}
+enum UserInput = { NoInput, CorrectPIN, IncorrectPIN}
+enum DataReturn = { NoData, Unsuccessful, Successful, Report }
+
+function tillStatus: Till -> TillStatus
+function accountStatus: Client-> AccountStatus
+function clientAction: Client -> UserOperation
+function userInput : Client -> UserInput
+function selectTill: Client -> Till
+function returnData: Till -> DataReturn
+
+
+// Variables
+function controlled INqueue: -> LIST
+function controlled OUTqueue: -> LIST
+
+init Main
+
+rule Main = {
+        forall t in Till do{
+                tillStatus(t) := Available
+                returnData(t) := NoData
+        }
+        forall c in Client do{
+                clientAction(c) := LogOut
+                accountStatus(c) := LoggedOut
+                userInput(c) := NoInput
+        }
+        selectTill(Client1) := Till1
+        selectTill(Client2) := Till2
         selectTill(Client3) := Till3
 
         INqueue:=[]
         OUTqueue:=[]
 
-
-
+        selectTill(Client3) := Till3
+        
         program(self) := undef
         program(ATM_Controller) := @ATMController
         program(Network_Controller) := @NetworkController
