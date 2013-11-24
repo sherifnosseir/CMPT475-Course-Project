@@ -3,31 +3,40 @@ CoreASM ATM
 
 use Standard
 use IO
+use QueuePlugin
 
 init Main
 
-universe Agents = {tillControl, centralNetwork, centralDatabase, observer, environment} 
-
+universe Agents = {tillControl, centralNetwork, observer, environment} 
 universe till = {till1, till2, till3}
 
-enum TillStatus = {Available, InUse, OutOfOrder}
-enum UserOperation = {CheckBalance, Withdraw, RequestStatement, LogOut}
-enum LoginStatus = {LoggedIn, LoggedOut, AccountLocked}
+enum TillStatus = {Available, Processing, InUse, OutOfOrder}
+enum UserOperation = {LogIn, CheckBalance, Withdraw, RequestStatement, LogOut}
+enum AccountStatus = {LoggedIn, LoggedOut, AccountLocked}
 enum CardStatus = {Empty, Inserted, Remove}
-//enum DatabaseState = {Available, Unavailable}
+enum DatabaseState = {Running, Stopped}
 
+// Till Functions
 function tillStatus: till -> TillStatus
 function userOperation: till -> UserOperation
 function cardStatus: till -> CardStatus
 function cardAttempts: till -> NUMBER
+function controlled cardNumber: till -> String
 function controlled pinNumber: till -> String
+function loginStatus: till -> LoginStatus // add to code conditions
 function controlled mainMenu: -> SET
-//function loginStatus(x): userLogin(t) -> LoginStatus //Not too sure about this one
-//function databaseState: -> DatabaseState
+
+// Database Functions
+function controlled dbCards: -> MAP
+function controlled dbAccounts: -> MAP
+function databaseState: -> DatabaseState
+
+function controlled queue: -> LIST
+
 
 //Main Program
 rule Main =
-{
+par
 	forall t in till do {
 		tillStatus(t) := Available
 		cardStatus(t) := Empty
@@ -41,16 +50,33 @@ rule Main =
 		add u to mainMenu
 	endseqblock
 	
+	seqblock
+		queue := []
+	
+		dbAccounts := { -> }
+		add {12345 -> {"pin" -> 123, "address"->"123 homeless street", "balance"->1000, "status"->"LoggedOut"},
+		12346 -> {"pin" -> 256, "address"->"123 rich street", "balance"->10000000, "status"->"LoggedOut"}} to dbAccounts
+		
+		dbCards := { -> }
+		add{1 -> 12345, 2 -> 12346, 3 -> 12345} to dbCards
+		//print "List of accounts " + dbAccounts
+		//print "Account Information 12345: " + dbAccounts()(12345)
+		//account := dbAccounts()(12345)
+		//print "Balance is : " + account()("balance")
+	endseqblock
+	
+	//let dbAccounts = 
+	//let dbCards = {123 -> 12345, 234 -> 12346, 567 -> 12345}
+	
 	program(self):=undef
 	program(tillControl):=@TillControl
-//	program(CentralNetwork):=@CentralNetworkControl
-//	program(CentralDatabase):=@CentralDatabaseControl
+	program(centralNetwork):=@CentralNetworkControl
 //	program(observer):=@ObserverProgram
 	program(environment):=@EnvironmentProgram
-}
+endpar
 
 rule TillControl =
-{
+par
 	forall t in till do
 	par
 		//Wait for card
@@ -68,7 +94,7 @@ rule TillControl =
 				if tillStatus(t) = InUse then
 					GetOperation(t)						
 	endpar
-}
+endpar
 
 // Process input 
 rule ProcessLogin(t) = 
@@ -76,6 +102,8 @@ rule ProcessLogin(t) =
 		pinNumber(t) := toString(input(t + " - Insert Pin Now"))
 		print t + ": inserted pin : " + pinNumber(t)
 	
+		
+		
 		//Hardcoded pin for now
 		if (pinNumber(t) != "123") then 
 		seqblock
@@ -112,20 +140,27 @@ rule GetOperation(t) =
 seqblock
 	userOperation(t) := toOperation(input(t + " - Select a service\n" + mainMenu))
 	if (userOperation(t) != undef) then par
-		if (userOperation(t) = CheckBalance) then
+		if (userOperation(t) = CheckBalance) then seqblock
+			enqueue t into queue
 			print "Your Balance is not important!"
 			//GetBalanceNetwork(t, userLogin(t))
-		if (userOperation(t) = Withdraw) then
+			endseqblock
+		if (userOperation(t) = Withdraw) then seqblock
+			enqueue t into queue
 			print "All your base are belong to us"
 			//WithdrawNetwork(t, userLogin(t), userWithdrawAmount(t))
-		if (userOperation(t) = RequestStatement) then
+			endseqblock
+		if (userOperation(t) = RequestStatement) then seqblock
+			enqueue t into queue
 			print "A statement will be delivered to your house"
 			//RequestStatementNetwork(t, userLogin(t))
+			endseqblock
 		if (userOperation(t) = LogOut) then seqblock
+			enqueue t into queue
 			print "Please take your card"
 			cardStatus(t) := Remove
-		endseqblock
-	endpar
+			endseqblock
+		endpar
 	else
 		print "Invalid Input"
 endseqblock
@@ -135,17 +170,51 @@ rule toOperation(userInput) =
 		choose x in UserOperation with toString(x) = userInput do
 			op := x
 
-/*rule CentralNetworkControl =
-{
+rule CentralDatabase(nextTill) =
+seqblock
+		if userOperation(nextTill) = LogIn then seqblock
+			print "LogIn"
+			
+		endseqblock
+		else if userOperation(nextTill) = CheckBalance then seqblock
+			print "CheckBalance"
+			
+		endseqblock
+		else if userOperation(nextTill) = Withdraw then seqblock
+			print "Withdraw"
+			
+		endseqblock
+		else if userOperation(nextTill) = RequestStatement then seqblock
+			print "RequestStatements"
+			
+		endseqblock
+		else if userOperation(nextTill) = LogOut then seqblock
+			print "LogOut"
+			
+		endseqblock
+	endseqblock
+endseqblock
 
+rule CentralNetworkControl =
+{
+	if (size(queue) = 0) then seqblock
+		print "Nothin to dequeue"
+	endseqblock
+	else seqblock
+		print "Dequeuing the queue"
+		dequeue nextOp from queue
+		if tail(nextOp) = undef then seqblock
+			print "Go to Database"
+			CentralDatabase(nextOp)
+		endseqblock
+		else seqblock
+			print "Go to Till"
+			(nextOp)
+		endseqblock
+	endseqblock
 }
 
-rule CentralDatabaseControl =
-{
-
-}
-
-rule ObserverProgram =
+/*rule ObserverProgram =
 {
 
 } */
@@ -164,6 +233,7 @@ rule EnvironmentProgram =
 			if (tillStatus(t) = Available and cardStatus(t) = Empty) then
 				print "User has inserted a card"
 				cardStatus(t) := Inserted
+				cardNumber(t) := 12345
 		endseqblock
 	endpar
 }
