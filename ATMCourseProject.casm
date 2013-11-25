@@ -1,256 +1,296 @@
-/* CoreASM specification */
-CoreASM ATM
+CoreASM ATM_System
 
 use Standard
+use Math
 use QueuePlugin
 
-init Main
+universe ATM = {TillControl, CentralNetwork, CentralDatabase}
+universe Till = {Till1, Till2, Till3}
+universe Client = { Client1, Client2, Client3}
 
-universe Agents = {tillControl, centralNetwork, observer, environment} 
-universe till = {till1, till2, till3}
+universe Agents = {ATM_Controller, Network_Controller, user, observer}
 
-enum TillStatus = {Available, Processing, InUse, OutOfOrder}
-enum UserOperation = {LogIn, CheckBalance, Withdraw, RequestStatement, LogOut}
-enum AccountStatus = {LoggedIn, LoggedOut, AccountLocked}
-enum CardStatus = {Empty, Inserted, Remove}
-enum DatabaseState = {Running, Stopped}
+enum TillStatus = { Available, InUse, BeginProcessing, Processing }
+enum AccountStatus = { LoggedIn, LoggedOut, AccountLocked }
+enum UserOperation = { EnterPIN,CheckBalance, Withdraw, RequestStatement, LogOut, Standby}
+enum UserInput = { NoInput, CorrectPIN, IncorrectPIN}
+//enum DataReturn = { NoData, Unsuccessful, Successful, Report }
 
-// Till Functions
-function tillStatus: till -> TillStatus
-function userOperation: till -> UserOperation
-function cardStatus: till -> CardStatus
-function cardAttempts: till -> NUMBER
-function controlled cardNumber: till -> String
+function tillStatus: Till -> TillStatus
+function accountStatus: Client-> AccountStatus
+function clientAction: Client -> UserOperation
+function userInput : Client -> UserInput
+function selectTill: Client -> Till
+function selectClient: Till -> Client
+function returnData: Till -> String // Changed from ReturnData
+function controlled cardNumber: Till -> String
 function controlled pinNumber: till -> String
-function accountStatus: till -> AccountStatus
-function controlled mainMenu: -> SET
+
+// Variables
+function controlled INqueue: -> LIST
+function controlled OUTqueue: -> LIST
 
 // Database Functions
 function controlled dbCards: -> MAP
 function controlled dbAccounts: -> MAP
-function databaseState: -> DatabaseState
+function controlled accountMap: till -> MAP
+function controlled withdrawMap: till -> MAP
 
-function controlled InQueue: -> LIST
-function controlled OutQueue: -> LIST
+init Main
 
-
-//Main Program
-rule Main =
-par
-        forall t in till do {
+rule Main = {
+        forall t in Till do seqblock
                 tillStatus(t) := Available
-                cardStatus(t) := Empty
-                cardAttempts(t) := 0
-        } 
-        
-        seqblock
-        mainMenu := {}
-        
-        forall u in UserOperation do
-                add u to mainMenu
+                returnData(t) := NoData
+                if t = Till1 then
+                	cardNumber(t) := 1
+                else if t = Till2 then
+                	cardNumber(t) := 2
+                else if t = Till3 then
+                	cardNumber(t) := 3
+        endseqblock
+        forall c in Client do seqblock
+                clientAction(c) := LogOut
+                accountStatus(c) := LoggedOut
+                userInput(c) := NoInput
         endseqblock
         
         seqblock
-                InQueue := []
-                OutQueue := []
         
-                dbAccounts := { -> }
-                add {12345 -> {"pin"->"123", "address"->"123 homeless street", "balance"->1000, "status"->"LoggedOut"},
-                12346 -> {"pin"->"256", "address"->"123 rich street", "balance"->10000000, "status"->"LoggedOut"}} to dbAccounts
-                
-                dbCards := { -> }
-                add{1 -> 12345, 2 -> 12346, 3 -> 12345} to dbCards
+        selectTill(Client1) := Till1
+        selectTill(Client2) := Till2
+        selectTill(Client3) := Till3
+        
+        selectClient(Till1) := Client1
+        selectClient(Till2) := Client2
+        selectClient(Till3) := Client3
+
+        INqueue:=[]
+        OUTqueue:=[]
+        dbAccounts := { -> }
+        add {12345 -> {"pin"-> 123, "address"->"123 homeless street", "balance"->1000, "status"->"LoggedOut"},
+        12346 -> {"pin"-> 256, "address"->"123 rich street", "balance"->10000000, "status"->"LoggedOut"},
+        12347 -> {"pin"-> 135, "address"->"123 derp street", "balance"->90000000, "status"->"LoggedOut"}} to dbAccounts
+        dbCards := { -> }
+        add{1 -> 12345, 2 -> 12346, 3 -> 12347} to dbCards
+        
         endseqblock
         
-        program(self):=undef
-        program(tillControl):=@TillControl
-        program(centralNetwork):=@CentralNetworkControl
-//        program(observer):=@ObserverProgram
-        program(environment):=@EnvironmentProgram
-endpar
+        program(self) := undef
+        program(ATM_Controller) := @ATMController
+        program(Network_Controller) := @NetworkController
+        program(user) := @UserBehaviour
+        program(observer) := @Observer
+}
 
-rule TillControl =
-par
-        forall t in till do
-        par
-                if tillStatus(t) != Processing then
-	                if cardStatus(t) = Empty then
-	                        print t + " - Please insert card"
-	                else if cardStatus(t) = Inserted then
-	                        if tillStatus(t) = Available then
-	                        seqblock
-	                        		ProcessLogin(t)
-	                        		userOperation(t) := LogIn
-	                        endseqblock
-	                        else
-	                                //Get Operation
-	                                if tillStatus(t) = InUse then
-	                                        GetOperation(t)                                                
-        endpar
-endpar
-
-// Process input f
-rule ProcessLogin(t) = 
-        seqblock
-        		print "hello3"
-            	pinNumber(t) := toString(input(t + " - Insert Pin Now : " + cardNumber(t)))            	
-                print "hell4"
-            	//accountMap := dbAccounts()(dbCards()(cardNumber(t)))
-            	//pinNumber(t) := accountMap()("pin")
-                //print t + ": inserted pin : " + pinNumber(t)
-                
-        		if (pinNumber(t) != undef) then par
-        			tillStatus(t) := Processing
-        			PushToInQueue(t)
-        		endpar
-		endseqblock
-
-rule KeepCard(t) =
-        par
-                ResetTill(t)
-                print "Card is kept by this ATM"
-        endpar
-
-rule ResetTill(t) =
-par
-        tillStatus(t) := Available
-        cardStatus(t) := Empty
-        cardAttempts(t) := 0
-        print "ATM is now available"
-        //Add card to list of cards not returned
-endpar
-
-rule GetOperation(t) = 
+// Helper Function: Can call this at any point to check client's overall status
+rule CheckStatus(Client) =
 seqblock
-        userOperation(t) := toOperation(input(t + " - Select a service\n" + mainMenu))
-        if (userOperation(t) != undef) then par
-        		tillStatus(t) := Processing
-                if (userOperation(t) = CheckBalance) then seqblock
-                		PushToInQueue(t)
-                        endseqblock
-                if (userOperation(t) = Withdraw) then seqblock
-                		PushToInQueue(t)
-                        endseqblock
-                if (userOperation(t) = RequestStatement) then seqblock
-                		PushToInQueue(t)
-                        endseqblock
-                if (userOperation(t) = LogOut) then seqblock
-                        print "Please take your card"
-                        cardStatus(t) := Remove
-                        endseqblock
-                endpar
-        else
-                print "Invalid Input"
+	//forall c in Client do
+	//seqblock
+	print c + " Status"
+	seqblock
+		if tillStatus(selectTill(c)) = Available then
+			print "Check: TillStatus Available"
+		else if tillStatus(selectTill(c)) = InUse then
+			print "Check: TillStatus InUse"
+		else if tillStatus(selectTill(c)) = BeginProcessing then
+			print "Check: TillStatus BeginProcessing"
+		else if tillStatus(selectTill(c)) = Processing then
+			print "Check: TillStatus Processing"
+			
+		if accountStatus(c) = LoggedIn then
+			print "Check: AccountStatus LoggedIn"
+		else if accountStatus(c) = LoggedOut then
+			print "Check: AccountStatus LoggedOut"
+		else if accountStatus(c) = AccountLocked then
+			print "Check: AccountStatus AccountLocked"
+			
+		if clientAction(c) = EnterPIN then
+			print "Check: UserOperation EnterPIN"
+		else if clientAction(c) = CheckBalance then
+			print "Check: UserOperation CheckBalance"
+		else if clientAction(c) = Withdraw then
+			print "Check: UserOperation Withdraw"
+		else if clientAction(c) = RequestStatement then
+			print "Check: UserOperation RequestStatement"
+		else if clientAction(c) = LogOut then
+			print "Check: UserOperation LogOut"
+		else if clientAction(c) = Standby then
+			print "Check: UserOperation Standby"	
+	//endseqblock
+	endseqblock
 endseqblock
 
-rule ToTill(currentTill, operation) = 
-seqblock
-        if userOperation(currentTill) = LogIn then seqblock
-        	if operation = "success" then par
-        		tillStatus(currentTill) :=  InUse
-        	endpar
-        	else seqblock
-        		cardAttempts(currentTill) := cardAttempts(currentTill) + 1
-        		if (cardAttempts(currentTill) = 3) then 
-                	KeepCard(currentTill)
-                else
-	                print currentTill + ": Invalid Pin\nAttempts so far: " + cardAttempts(currentTill)
-	                
-               tillStatus(currentTill) :=  Available
-        	endseqblock
-        endseqblock
-        else if userOperation(currentTill) = CheckBalance then seqblock
-                print "Your balance is " + operation
-                tillStatus(currentTill) := InUse
-        endseqblock
-        else if userOperation(currentTill) = Withdraw then seqblock
-                print "Withdraw"
-                
-        endseqblock
-        else if userOperation(currentTill) = RequestStatement then seqblock
-                print "A mail will be sent to " + operation
-                tillStatus(currentTill) := InUse
-        endseqblock
-endseqblock
+rule RandomVal =
+        return rnd in
+        choose x in [1 .. 100] do
+                rnd := x/100
 
-rule toOperation(userInput) = 
-        return op in 
-                choose x in UserOperation with toString(x) = userInput do
-                        op := x
-
-rule CentralDatabase(currentTill) =
-seqblock
-        if userOperation(currentTill) = LogIn then seqblock
-                accountN := dbCards()(1)
-                accountMap := dbAccounts()(accountN)
-
-                if pinNumber(currentTill) = accountMap()("pin") then seqblock
-                	PushToOutQueue([currentTill, "success"])
+rule ATMController = 
+	seqblock
+        forall c in Client do seqblock
+                if clientAction(c) = EnterPIN then seqblock
+                		// NOTE: Currently only Client1 does anything!!!!
+                        if userInput(c) = CorrectPIN and c = Client1 then seqblock
+                        		//print c + " -- userInput = CorrectPIN"
+                                accountStatus(c) := LoggedIn
+                        endseqblock
                 endseqblock
-                else
-                	PushToOutQueue([currentTill, "fail"])
+
+                if(clientAction(c) = LogOut) then seqblock
+                		//print c + " -- clientAction = LogOut"
+                        tillStatus(selectTill(c)) := Available
+                        accountStatus(c) := LoggedOut
+                        returnData(selectTill(c)) := NoData
+                endseqblock
+                else if (accountStatus(c) = LoggedIn and tillStatus(selectTill(c)) = Available) then seqblock
+                		//print c + " -- tillStatus = InUse"
+                        tillStatus(selectTill(c)) := InUse
+                endseqblock
+                else if (accountStatus(c) = LoggedIn and tillStatus(selectTill(c)) = BeginProcessing) then seqblock
+                        print "***************"+selectTill(c)
+                        print "_+_+_+_+_+_+_+_"+clientAction(c)
+                        tillStatus(selectTill(c)):= Processing
+                        enqueue [selectTill(c), clientAction(c)] into INqueue
+                        print "After enqueuing " + size(INqueue)
+                endseqblock
         endseqblock
-        else if userOperation(currentTill) = CheckBalance then seqblock
-                accountN := dbCards()(1)
-                accountMap := dbAccounts()(accountN)
-                
-            	PushToOutQueue([currentTill, accountMap()("balance")])
+
+		seqblock
+	        forall t in Till do seqblock
+	                if (returnData(t)!= undef)then seqblock
+	                        print "@@@ " + t + " Result @@@: " + returnData(t)
+	                        tillStatus(t):= InUse
+	                endseqblock
+	        endseqblock
         endseqblock
-        else if userOperation(currentTill) = Withdraw then seqblock
-                print "Withdraw"
-                
+    
+	endseqblock
+
+rule NetworkController = seqblock
+    if (size(INqueue) > 0) then seqblock
+        print "Dequeuing"
+        dequeue nextdbOp from INqueue
+        print "After dequeue " + size(INqueue)
+        PassToDatabase(head(nextdbOp), head(tail(nextdbOp)))
+    endseqblock
+
+    if (size(OUTqueue) > 0) then seqblock
+        dequeue nextTillOp from OUTqueue
+        PassToTill(head(nextTillOp), head(tail(nextTillOp)))
+    endseqblock
+endseqblock
+
+rule PassToDatabase(till, action) = seqblock
+        if (action = Withdraw) then seqblock
+                if RandomVal > 0.0 then seqblock
+                		// This needs to happen because for some reason cannot directly modify map value
+		        		derp := (dbAccounts()(dbCards()(cardNumber(till))))("balance")
+		        		derp := derp - 100
+		        		print "TESTIN " + dbAccounts
+		        		remove dbCards()(cardNumber(till)) from dbAccounts
+		        		add {dbCards()(cardNumber(till)) -> {"pin"-> accountMap(till)("pin"), 
+		        			"address"->accountMap(till)("address"), "balance"->derp, "status"->"LoggedOut"}} to dbAccounts
+		        		print "TESTIN2 " + dbAccounts
+		        		accountMap(till) := dbAccounts()(dbCards()(cardNumber(till)))
+                        enqueue [till, ("Successful, new balance " + accountMap(till)("balance"))] into OUTqueue
+                endseqblock
+                else seqblock
+                        enqueue [till, "Unsuccessful"] into OUTqueue
+                endseqblock
         endseqblock
-        else if userOperation(currentTill) = RequestStatement then seqblock
-                accountN := dbCards()(1)
-                accountMap := dbAccounts()(accountN)
-				
-				PushToOutQueue([currentTill, accountMap()("address")])                
+        else if(action = RequestStatement) then seqblock
+                enqueue [till, "Statement Sent!"] into OUTqueue
+        endseqblock
+        else if(action = CheckBalance) then seqblock
+        		
+                enqueue [till, accountMap(till)("balance")] into OUTqueue
         endseqblock
 endseqblock
 
-rule CentralNetworkControl =
-par
-        if (size(InQueue) != 0) then seqblock
-        		print "Pushing to database"
-                dequeue nextDbOp from InQueue
-                CentralDatabase(nextDbOp)
+rule PassToTill(till, retData) = seqblock
+        returnData(till):= retData
+endseqblock
+
+
+
+rule UserBehaviour = seqblock
+        forall c in Client do seqblock
+                if accountStatus(c) = LoggedOut then seqblock
+                        if clientAction(c) = EnterPIN then seqblock
+                        		//t := selectTill(c)
+                        		
+                        		// Assume correct input for now
+                        		if selectTill(c) = Till1 then
+                        			pinNumber(selectTill(c)) := 123
+                        		else if selectTill(c) = Till2 then
+                        			pinNumber(selectTill(c)) := 256
+                        		else if selectTill(c) = Till3 then
+                        			pinNumber(selectTill(c)) := 135
+                        		
+                        		print selectTill(c) + ": inserted pin : " + pinNumber(selectTill(c)) + " for card number " + cardNumber(selectTill(c))
+						        accountMap(selectTill(c)) := dbAccounts()(dbCards()(cardNumber(selectTill(c))))
+						        print pinNumber(selectTill(c)) + " Card info " + accountMap(selectTill(c))("pin")
+						        
+                                if pinNumber(selectTill(c)) = accountMap(selectTill(c))("pin") then seqblock
+                                        userInput(c) := CorrectPIN
+                                        print "CORRECT"
+                                endseqblock
+                                else seqblock
+                                        userInput(c) := IncorrectPIN
+                                        print "INCORRECT"
+                                endseqblock
+                        endseqblock
+                        else if clientAction(c) = LogOut then seqblock
+                                if RandomVal > 0.0 then seqblock
+                                        clientAction(c) := EnterPIN
+                                endseqblock
+                        endseqblock
+                endseqblock
+                if accountStatus(c) = LoggedIn then seqblock
+                    if tillStatus(selectTill(c)) = InUse then seqblock
+                        choose x in [1 .. 4] do seqblock
+                            if x = 1 then seqblock
+                            		print c + " chose CheckBalance"
+                                    clientAction(c) := CheckBalance
+                                    tillStatus(selectTill(c)):= BeginProcessing
+                                    CheckStatus(c)
+                                    print INqueue()
+                            endseqblock
+                            else if x = 2 then seqblock
+                            		print c + " chose Withdraw"
+                                    clientAction(c) := Withdraw
+                                    tillStatus(selectTill(c)):= BeginProcessing
+                                    CheckStatus(c)
+                                    print INqueue()
+                            endseqblock
+                            else if x = 3 then seqblock
+                            		print c + " chose RequestStatement"
+                                    clientAction(c) := RequestStatement
+                                    tillStatus(selectTill(c)):= BeginProcessing
+                                    CheckStatus(c)
+                                    print INqueue()
+                            endseqblock
+                            else if x = 4 then seqblock
+                                    clientAction(c) := LogOut
+                            endseqblock
+                        endseqblock
+                    endseqblock
+                endseqblock
         endseqblock
-        
-        if (size(OutQueue) != 0) then seqblock
-        		print "Pushing to Till"
-                dequeue nextTillOp from OutQueue
-                ToTill(head(nextTillOp), head(tail(nextTillOp)))
-        endseqblock
-endpar
+endseqblock
 
-rule PushToInQueue(x) =
-par
-	enqueue x into InQueue
-endpar
 
-rule PushToOutQueue(x) =
-par
-	enqueue x into OutQueue
-endpar
 
-/*rule ObserverProgram =
-{
+rule Observer = {
+        //forall t in Till do{
+        //        print "=== " + t + ": " + tillStatus(t)
+        //}
+        //forall c in Client do{
+        //        print c + " is " + clientAction(c)
+        //}
+        print "INQUEUE: " + size(INqueue)
+        print "OUTQUEUE: "+size(OUTqueue)
 
-} */
-
-rule EnvironmentProgram =
-par
-        forall t in till do
-        par
-        //Simulating user interaction
-                if cardStatus(t) = Remove then par
-                        print "User has removed a card"
-                        ResetTill(t)
-                endpar
-                else if (tillStatus(t) = Available and cardStatus(t) = Empty) then par
-                        print "User has inserted a card into " + t
-                        cardStatus(t) := Inserted
-                        cardNumber(t) := 1
-                endpar
-        endpar
-endpar
+}
