@@ -214,12 +214,12 @@ rule PassToDatabase(till, action) = seqblock
         if (action = Withdraw) then seqblock
                 if RandomVal > 0.0 then seqblock
                 		// This needs to happen because for some reason cannot directly modify map value
-		        		derp := (dbAccounts()(dbCards()(cardNumber(till))))("balance")
-		        		derp := derp - 100
+		        		temp := (dbAccounts()(dbCards()(cardNumber(till))))("balance")
+		        		temp := temp - 100
 		        		print "TESTIN " + dbAccounts
 		        		remove dbCards()(cardNumber(till)) from dbAccounts
 		        		add {dbCards()(cardNumber(till)) -> {"pin"-> accountMap(till)("pin"), 
-		        			"address"->accountMap(till)("address"), "balance"->derp, "status"->"LoggedOut"}} to dbAccounts
+		        			"address"->accountMap(till)("address"), "balance"->temp, "status"->"LoggedOut"}} to dbAccounts
 		        		print "TESTIN2 " + dbAccounts
 		        		accountMap(till) := dbAccounts()(dbCards()(cardNumber(till)))
 		        		PushToOutQueue(till, [till, ("Successful, new balance " + accountMap(till)("balance"))])
