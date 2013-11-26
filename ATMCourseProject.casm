@@ -14,46 +14,65 @@ enum TillStatus = { Available, InUse, BeginProcessing, Processing }
 enum AccountStatus = { LoggedIn, LoggedOut, AccountLocked }
 enum UserOperation = { EnterPIN,CheckBalance, Withdraw, RequestStatement, LogOut, Standby}
 enum UserInput = { NoInput, CorrectPIN, IncorrectPIN}
-enum DataReturn = { NoData, Unsuccessful, Successful, Report }
+//enum DataReturn = { NoData, Unsuccessful, Successful, Report }
 
 function tillStatus: Till -> TillStatus
 function accountStatus: Client-> AccountStatus
 function clientAction: Client -> UserOperation
 function userInput : Client -> UserInput
 function selectTill: Client -> Till
-function selectClient: program -> Client
-function returnData: Till -> DataReturn
+function selectClient: Till -> Client
+function chooseClient: program -> Client
+function returnData: Till -> String // Changed from ReturnData
+function controlled cardNumber: Till -> String
+function controlled pinNumber: till -> String
 
 // Variables
 function controlled INqueue: till -> LIST
 function controlled OUTqueue: till -> LIST
 
+// Database Functions
+function controlled dbCards: -> MAP
+function controlled dbAccounts: -> MAP
+function controlled accountMap: till -> MAP
+function controlled withdrawMap: till -> MAP
+
 init Main
 
 rule Main = {
-        forall t in Till do{
+        forall t in Till do seqblock
                 tillStatus(t) := Available
                 returnData(t) := NoData
-        }
-        forall c in Client do{
+                if t = Till1 then
+                	cardNumber(t) := 1
+                else if t = Till2 then
+                	cardNumber(t) := 2
+                else if t = Till3 then
+                	cardNumber(t) := 3
+        endseqblock
+        forall c in Client do seqblock
                 clientAction(c) := LogOut
                 accountStatus(c) := LoggedOut
                 userInput(c) := NoInput
-        }
-        inQueueStatus := unlocked
-        outQueueStatus := unlocked
+        endseqblock
+        
+        seqblock
         
         selectTill(Client1) := Till1
         selectTill(Client2) := Till2
         selectTill(Client3) := Till3
         
-        selectClient(ATM_Controller1) := Client1
-        selectClient(ATM_Controller2) := Client2
-        selectClient(ATM_Controller3) := Client3
+        selectClient(Till1) := Client1
+        selectClient(Till2) := Client2
+        selectClient(Till3) := Client3
         
-        selectClient(user1) := Client1
-        selectClient(user2) := Client2
-        selectClient(user3) := Client3
+        chooseClient(ATM_Controller1) := Client1
+        chooseClient(ATM_Controller2) := Client2
+        chooseClient(ATM_Controller3) := Client3
+        
+        chooseClient(user1) := Client1
+        chooseClient(user2) := Client2
+        chooseClient(user3) := Client3
 
         INqueue(Till1):=[]
         INqueue(Till2):=[]
@@ -61,8 +80,17 @@ rule Main = {
         OUTqueue(Till1):=[]
         OUTqueue(Till2):=[]
         OUTqueue(Till3):=[]
-
-		seqblock
+        
+        dbAccounts := { -> }
+        add {12345 -> {"pin"-> 123, "address"->"123 homeless street", "balance"->1000, "status"->"LoggedOut"},
+        12346 -> {"pin"-> 256, "address"->"123 rich street", "balance"->10000000, "status"->"LoggedOut"},
+        12347 -> {"pin"-> 135, "address"->"123 derp street", "balance"->90000000, "status"->"LoggedOut"}} to dbAccounts
+        dbCards := { -> }
+        add{1 -> 12345, 2 -> 12346, 3 -> 12347} to dbCards
+        
+        endseqblock
+        
+        seqblock
         program(self) := undef
         program(ATM_Controller1) := @ATMController
         program(ATM_Controller2) := @ATMController
@@ -75,14 +103,53 @@ rule Main = {
 		endseqblock
 }
 
+// Helper Function: Can call this at any point to check client's overall status
+rule CheckStatus(Client) =
+seqblock
+	//forall c in Client do
+	//seqblock
+	print c + " Status"
+	seqblock
+		if tillStatus(selectTill(c)) = Available then
+			print "Check: TillStatus Available"
+		else if tillStatus(selectTill(c)) = InUse then
+			print "Check: TillStatus InUse"
+		else if tillStatus(selectTill(c)) = BeginProcessing then
+			print "Check: TillStatus BeginProcessing"
+		else if tillStatus(selectTill(c)) = Processing then
+			print "Check: TillStatus Processing"
+			
+		if accountStatus(c) = LoggedIn then
+			print "Check: AccountStatus LoggedIn"
+		else if accountStatus(c) = LoggedOut then
+			print "Check: AccountStatus LoggedOut"
+		else if accountStatus(c) = AccountLocked then
+			print "Check: AccountStatus AccountLocked"
+			
+		if clientAction(c) = EnterPIN then
+			print "Check: UserOperation EnterPIN"
+		else if clientAction(c) = CheckBalance then
+			print "Check: UserOperation CheckBalance"
+		else if clientAction(c) = Withdraw then
+			print "Check: UserOperation Withdraw"
+		else if clientAction(c) = RequestStatement then
+			print "Check: UserOperation RequestStatement"
+		else if clientAction(c) = LogOut then
+			print "Check: UserOperation LogOut"
+		else if clientAction(c) = Standby then
+			print "Check: UserOperation Standby"	
+	//endseqblock
+	endseqblock
+endseqblock
+
 rule RandomVal =
         return rnd in
         choose x in [1 .. 100] do
                 rnd := x/100
 
-rule ATMController =
-seqblock
-		c := selectClient(self)
+rule ATMController = 
+	seqblock
+        c := chooseClient(self)
 		t := selectTill(c)
 		
                 if clientAction(c) = EnterPIN then seqblock
@@ -99,20 +166,21 @@ seqblock
                 else if (accountStatus(c) = LoggedIn and tillStatus(t) = Available) then seqblock
                         tillStatus(t) := InUse
                 endseqblock
-                else if (accountStatus(c) = LoggedIn and tillStatus(t) = BeginProcessing) then seqblock
-                        print "***************"+t
+                else if (accountStatus(c) = LoggedIn and tillStatus(selectTill(c)) = BeginProcessing) then seqblock
+                        print "***************"+selectTill(c)
                         print "_+_+_+_+_+_+_+_"+clientAction(c)
                         PushToInQueue(t, [t, clientAction(c)])
                         print size(INqueue(t))
                         tillStatus(t):= Processing
                 endseqblock
 
-                if (returnData(t)!=NoData) then seqblock
-                        print "@@@ " + t + " Result @@@: " + returnData(t)
-                        tillStatus(t):= InUse
-                        returnData(t) := NoData
-                endseqblock
-endseqblock
+		seqblock
+	                if (returnData(t)!= undef)then seqblock
+	                        print "@@@ " + t + " Result @@@: " + returnData(t)
+	                        tillStatus(t):= InUse
+	                endseqblock
+    	endseqblock
+	endseqblock
 
 rule NetworkController = seqblock
 	forall t in Till do seqblock
@@ -144,66 +212,95 @@ endpar
 
 rule PassToDatabase(till, action) = seqblock
         if (action = Withdraw) then seqblock
-                if RandomVal > 0.7 then seqblock
-                        PushToOutQueue(till, [till, "Successful"])
+                if RandomVal > 0.0 then seqblock
+                		// This needs to happen because for some reason cannot directly modify map value
+		        		derp := (dbAccounts()(dbCards()(cardNumber(till))))("balance")
+		        		derp := derp - 100
+		        		print "TESTIN " + dbAccounts
+		        		remove dbCards()(cardNumber(till)) from dbAccounts
+		        		add {dbCards()(cardNumber(till)) -> {"pin"-> accountMap(till)("pin"), 
+		        			"address"->accountMap(till)("address"), "balance"->derp, "status"->"LoggedOut"}} to dbAccounts
+		        		print "TESTIN2 " + dbAccounts
+		        		accountMap(till) := dbAccounts()(dbCards()(cardNumber(till)))
+		        		PushToOutQueue(till, [till, ("Successful, new balance " + accountMap(till)("balance"))])
                 endseqblock
                 else seqblock
-                        PushToOutQueue(till, [till, "Unsuccessful"])
+                        enqueue [till, "Unsuccessful"] into OUTqueue
                 endseqblock
         endseqblock
         else if(action = RequestStatement) then seqblock
-                PushToOutQueue(till, [till, "Successful"])
+                PushToOutQueue(till, [till, "Send Successful"])
         endseqblock
         else if(action = CheckBalance) then seqblock
-                PushToOutQueue(till, [till, "Report"])
+        		PushToOutQueue(till, [till, accountMap(till)("balance")])
         endseqblock
 endseqblock
 
-rule PassToTill(till, retData) = par
+rule PassToTill(till, retData) = seqblock
         returnData(till):= retData
-endpar
+endseqblock
 
 
 
-rule UserBehaviour = {
-        c := selectClient(self)
-        t := selectTill(c)
+rule UserBehaviour = seqblock
+		c := chooseClient(self)
+        t := selectTill(c)        
                 if accountStatus(c) = LoggedOut then seqblock
                         if clientAction(c) = EnterPIN then seqblock
-                                if RandomVal > 0.2 then seqblock
+                        		//t := selectTill(c)
+                        		
+                        		// Assume correct input for now
+                        		if t = Till1 then
+                        			pinNumber(t) := 123
+                        		else if t = Till2 then
+                        			pinNumber(t) := 256
+                        		else if t = Till3 then
+                        			pinNumber(t) := 135
+                        		
+                        		print t + ": inserted pin : " + pinNumber(t) + " for card number " + cardNumber(t)
+						        accountMap(t) := dbAccounts()(dbCards()(cardNumber(t)))
+						        print pinNumber(t) + " Card info " + accountMap(t)("pin")
+						        
+                                if pinNumber(t) = accountMap(t)("pin") then seqblock
                                         userInput(c) := CorrectPIN
+                                        print "CORRECT"
                                 endseqblock
                                 else seqblock
                                         userInput(c) := IncorrectPIN
+                                        print "INCORRECT"
                                 endseqblock
                         endseqblock
                         else if clientAction(c) = LogOut then seqblock
-                                if RandomVal > 0.8 then seqblock
+                                if RandomVal > 0.0 then seqblock
                                         clientAction(c) := EnterPIN
                                 endseqblock
                         endseqblock
                 endseqblock
                 if accountStatus(c) = LoggedIn then seqblock
-                        if tillStatus(t) = InUse then seqblock
-                                choose x in [1 .. 4] do
-                                        if x = 1 then seqblock
-                                                clientAction(c) := CheckBalance
-                                                tillStatus(t):= BeginProcessing
-                                        endseqblock
-                                        else if x = 2 then seqblock
-                                                clientAction(c) := Withdraw
-                                                tillStatus(t):= BeginProcessing
-                                        endseqblock
-                                        else if x = 3 then seqblock
-                                                clientAction(c) := RequestStatement
-                                                tillStatus(t):= BeginProcessing
-                                        endseqblock
-                                        else if x = 4 then seqblock
-                                                clientAction(c) := LogOut
-                                        endseqblock
+                    if tillStatus(t) = InUse then seqblock
+                        choose x in [1 .. 4] do seqblock
+                            if x = 1 then seqblock
+                            		print c + " chose CheckBalance"
+                                    clientAction(c) := CheckBalance
+                                    tillStatus(t):= BeginProcessing
+                            endseqblock
+                            else if x = 2 then seqblock
+                            		print c + " chose Withdraw"
+                                    clientAction(c) := Withdraw
+                                    tillStatus(t):= BeginProcessing
+                            endseqblock
+                            else if x = 3 then seqblock
+                            		print c + " chose RequestStatement"
+                                    clientAction(c) := RequestStatement
+                                    tillStatus(t):= BeginProcessing
+                            endseqblock
+                            else if x = 4 then seqblock
+                                    clientAction(c) := LogOut
+                            endseqblock
                         endseqblock
+                    endseqblock
                 endseqblock
-}
+endseqblock
 
 
 
