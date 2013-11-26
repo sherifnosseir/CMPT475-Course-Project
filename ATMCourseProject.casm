@@ -81,13 +81,10 @@ rule RandomVal =
                 rnd := x/100
 
 rule ATMController =
-par 
 seqblock
 		c := selectClient(self)
 		t := selectTill(c)
-endseqblock
 		
-		par
                 if clientAction(c) = EnterPIN then seqblock
                         if userInput(c) = CorrectPIN then seqblock
                                 accountStatus(c) := LoggedIn
@@ -115,11 +112,10 @@ endseqblock
                         tillStatus(t):= InUse
                         returnData(t) := NoData
                 endseqblock
-	endpar
-endpar
+endseqblock
 
-rule NetworkController = {
-	forall t in Till do {
+rule NetworkController = seqblock
+	forall t in Till do seqblock
         if (size(INqueue(t)) > 0) then seqblock
         		print "Pushing to DB"
                 dequeue nextdbOp from INqueue(t)
@@ -131,22 +127,22 @@ rule NetworkController = {
                 dequeue nextTillOp from OUTqueue(t)
                 PassToTill(head(nextTillOp), head(tail(nextTillOp)))
         endseqblock
-    }
-}
+    endseqblock
+endseqblock
 
 rule PushToInQueue(t, x) =
 par
 	print "Pushing to network IN"
-	add x to INqueue(t)
+	enqueue x into INqueue(t)
 endpar
 
 rule PushToOutQueue(t, x) =
 par
 	print "Pushing to network OUT"
-	add x to OUTqueue(t)
+	enqueue x into OUTqueue(t)
 endpar
 
-rule PassToDatabase(till, action) = par
+rule PassToDatabase(till, action) = seqblock
         if (action = Withdraw) then seqblock
                 if RandomVal > 0.7 then seqblock
                         PushToOutQueue(till, [till, "Successful"])
@@ -161,7 +157,7 @@ rule PassToDatabase(till, action) = par
         else if(action = CheckBalance) then seqblock
                 PushToOutQueue(till, [till, "Report"])
         endseqblock
-endpar
+endseqblock
 
 rule PassToTill(till, retData) = par
         returnData(till):= retData
