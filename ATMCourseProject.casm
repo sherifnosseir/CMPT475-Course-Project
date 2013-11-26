@@ -8,7 +8,7 @@ universe ATM = {TillControl, CentralNetwork, CentralDatabase}
 universe Till = {Till1, Till2, Till3}
 universe Client = { Client1, Client2, Client3}
 
-universe Agents = {ATM_Controller, Network_Controller, user, observer}
+universe Agents = {ATM_Controller1, ATM_Controller2, ATM_Controller3, Network_Controller, user1, user2, user3, observer}
 
 enum TillStatus = { Available, InUse, BeginProcessing, Processing }
 enum AccountStatus = { LoggedIn, LoggedOut, AccountLocked }
@@ -21,12 +21,12 @@ function accountStatus: Client-> AccountStatus
 function clientAction: Client -> UserOperation
 function userInput : Client -> UserInput
 function selectTill: Client -> Till
+function selectClient: program -> Client
 function returnData: Till -> DataReturn
 
-
 // Variables
-function controlled INqueue: -> LIST
-function controlled OUTqueue: -> LIST
+function controlled INqueue: till -> LIST
+function controlled OUTqueue: till -> LIST
 
 init Main
 
@@ -40,21 +40,39 @@ rule Main = {
                 accountStatus(c) := LoggedOut
                 userInput(c) := NoInput
         }
+        inQueueStatus := unlocked
+        outQueueStatus := unlocked
+        
         selectTill(Client1) := Till1
         selectTill(Client2) := Till2
         selectTill(Client3) := Till3
-
-        INqueue:=[]
-        OUTqueue:=[]
-
-        selectTill(Client3) := Till3
         
-        program(self) := undef
-        program(ATM_Controller) := @ATMController
-        program(Network_Controller) := @NetworkController
-        program(user) := @UserBehaviour
-        program(observer) := @Observer
+        selectClient(ATM_Controller1) := Client1
+        selectClient(ATM_Controller2) := Client2
+        selectClient(ATM_Controller3) := Client3
+        
+        selectClient(user1) := Client1
+        selectClient(user2) := Client2
+        selectClient(user3) := Client3
 
+        INqueue(Till1):=[]
+        INqueue(Till2):=[]
+        INqueue(Till3):=[]
+        OUTqueue(Till1):=[]
+        OUTqueue(Till2):=[]
+        OUTqueue(Till3):=[]
+
+		seqblock
+        program(self) := undef
+        program(ATM_Controller1) := @ATMController
+        program(ATM_Controller2) := @ATMController
+        program(ATM_Controller3) := @ATMController
+        program(Network_Controller) := @NetworkController
+        program(user1) := @UserBehaviour
+        program(user2) := @UserBehaviour
+        program(user3) := @UserBehaviour
+        program(observer) := @Observer
+		endseqblock
 }
 
 rule RandomVal =
@@ -62,8 +80,14 @@ rule RandomVal =
         choose x in [1 .. 100] do
                 rnd := x/100
 
-rule ATMController = {
-        forall c in Client do{
+rule ATMController =
+par 
+seqblock
+		c := selectClient(self)
+		t := selectTill(c)
+endseqblock
+		
+		par
                 if clientAction(c) = EnterPIN then seqblock
                         if userInput(c) = CorrectPIN then seqblock
                                 accountStatus(c) := LoggedIn
@@ -71,67 +95,83 @@ rule ATMController = {
                 endseqblock
 
                 if(clientAction(c) = LogOut) then seqblock
-                        tillStatus(selectTill(c)) := Available
+                        tillStatus(t) := Available
                         accountStatus(c) := LoggedOut
-                        returnData(selectTill(c)) := NoData
+                        returnData(t) := NoData
                 endseqblock
-                else if (accountStatus(c) = LoggedIn and tillStatus(selectTill(c)) = Available) then seqblock
-                        tillStatus(selectTill(c)) := InUse
+                else if (accountStatus(c) = LoggedIn and tillStatus(t) = Available) then seqblock
+                        tillStatus(t) := InUse
                 endseqblock
-                else if (accountStatus(c) = LoggedIn and tillStatus(selectTill(c)) = BeginProcessing) then seqblock
-                        print "***************"+selectTill(c)
+                else if (accountStatus(c) = LoggedIn and tillStatus(t) = BeginProcessing) then seqblock
+                        print "***************"+t
                         print "_+_+_+_+_+_+_+_"+clientAction(c)
-                        enqueue [selectTill(c), clientAction(c)] into INqueue
-                        print size(INqueue)
-                        tillStatus(selectTill(c)):= Processing
+                        PushToInQueue(t, [t, clientAction(c)])
+                        print size(INqueue(t))
+                        tillStatus(t):= Processing
                 endseqblock
-        }
 
-        forall t in Till do{
-                if (returnData(t)!=NoData)then seqblock
+                if (returnData(t)!=NoData) then seqblock
                         print "@@@ " + t + " Result @@@: " + returnData(t)
                         tillStatus(t):= InUse
+                        returnData(t) := NoData
                 endseqblock
-        }
-}
+	endpar
+endpar
 
 rule NetworkController = {
-                if (size(INqueue) > 0) then seqblock
-                dequeue nextdbOp from INqueue
+	forall t in Till do {
+        if (size(INqueue(t)) > 0) then seqblock
+        		print "Pushing to DB"
+                dequeue nextdbOp from INqueue(t)
                 PassToDatabase(head(nextdbOp), head(tail(nextdbOp)))
         endseqblock
 
-                if (size(OUTqueue) > 0) then seqblock
-                dequeue nextTillOp from OUTqueue
+        if (size(OUTqueue(t)) > 0) then seqblock
+        		print "Pushing to Till"
+                dequeue nextTillOp from OUTqueue(t)
                 PassToTill(head(nextTillOp), head(tail(nextTillOp)))
         endseqblock
+    }
 }
 
-rule PassToDatabase(till, action) = seqblock
+rule PushToInQueue(t, x) =
+par
+	print "Pushing to network IN"
+	add x to INqueue(t)
+endpar
+
+rule PushToOutQueue(t, x) =
+par
+	print "Pushing to network OUT"
+	add x to OUTqueue(t)
+endpar
+
+rule PassToDatabase(till, action) = par
         if (action = Withdraw) then seqblock
                 if RandomVal > 0.7 then seqblock
-                        enqueue [till, "Successful"] into OUTqueue
+                        PushToOutQueue(till, [till, "Successful"])
                 endseqblock
                 else seqblock
-                        enqueue [till, "Unsuccessful"] into OUTqueue
+                        PushToOutQueue(till, [till, "Unsuccessful"])
                 endseqblock
         endseqblock
         else if(action = RequestStatement) then seqblock
-                enqueue [till, "Successful"] into OUTqueue
+                PushToOutQueue(till, [till, "Successful"])
         endseqblock
         else if(action = CheckBalance) then seqblock
-                enqueue [till, "Report"] into OUTqueue
+                PushToOutQueue(till, [till, "Report"])
         endseqblock
-endseqblock
+endpar
 
-rule PassToTill(till, retData) = seqblock
+rule PassToTill(till, retData) = par
         returnData(till):= retData
-endseqblock
+endpar
 
 
 
 rule UserBehaviour = {
-        forall c in Client do{
+        c := selectClient(self)
+        t := selectTill(c)
                 if accountStatus(c) = LoggedOut then seqblock
                         if clientAction(c) = EnterPIN then seqblock
                                 if RandomVal > 0.2 then seqblock
@@ -148,26 +188,25 @@ rule UserBehaviour = {
                         endseqblock
                 endseqblock
                 if accountStatus(c) = LoggedIn then seqblock
-                        if tillStatus(selectTill(c)) = InUse then seqblock
+                        if tillStatus(t) = InUse then seqblock
                                 choose x in [1 .. 4] do
                                         if x = 1 then seqblock
                                                 clientAction(c) := CheckBalance
-                                                tillStatus(selectTill(c)):= BeginProcessing
+                                                tillStatus(t):= BeginProcessing
                                         endseqblock
                                         else if x = 2 then seqblock
                                                 clientAction(c) := Withdraw
-                                                tillStatus(selectTill(c)):= BeginProcessing
+                                                tillStatus(t):= BeginProcessing
                                         endseqblock
                                         else if x = 3 then seqblock
                                                 clientAction(c) := RequestStatement
-                                                tillStatus(selectTill(c)):= BeginProcessing
+                                                tillStatus(t):= BeginProcessing
                                         endseqblock
                                         else if x = 4 then seqblock
                                                 clientAction(c) := LogOut
                                         endseqblock
                         endseqblock
                 endseqblock
-        }
 }
 
 
@@ -175,11 +214,11 @@ rule UserBehaviour = {
 rule Observer = {
         forall t in Till do{
                 print "=== " + t + ": " + tillStatus(t)
+		        print "INQUEUE: " + t + " " + size(INqueue(t))
+		        print "OUTQUEUE: " + t + " " + size(OUTqueue(t))
         }
         forall c in Client do{
                 print c + " is " + clientAction(c)
         }
-        print "INQUEUE: " + size(INqueue)
-        print "OUTQUEUE: "+size(OUTqueue)
 
 }
