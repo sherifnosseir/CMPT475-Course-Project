@@ -1,4 +1,11 @@
-/* CoreASM specification */
+/* 
+CMPT 475 Group Project - Till Model
+Group 8
+Sherif Nosseir (301133612)
+Conrad Locke (301111462)
+Yorkson Jeen (301117556)
+Jacques Sy (301102921)
+ */
 CoreASM ATM
 
 use Standard
@@ -35,6 +42,9 @@ function databaseState: -> DatabaseState
 function controlled InQueue: -> LIST
 function controlled OutQueue: -> LIST
 
+function controlled UserCardQueue: -> LIST
+function controlled InvalidCards: -> LIST
+
 
 //Main Program
 rule Main =
@@ -51,18 +61,28 @@ par
                 add u to mainMenu
         }
         
-        
         InQueue := []
         OutQueue := []
 
         dbAccounts := { -> }
         add {12345 -> {"address"->"123 homeless street", "balance"->1000, "withdrawLimit"->200},
-        12346 -> {"address"->"123 rich street", "balance"->10000000, "withdrawLimit"->10000}} to dbAccounts
+        12346 -> {"address"->"123 rich street", "balance"->10000000, "withdrawLimit"->10000},
+        12347 -> {"address"->"123 bankrupt street", "balance"->150, "withdrawLimit"->200}} to dbAccounts
         
         dbCards := { -> }
         add {1 -> {"pin"->"123", "accountN"->12345, "withdraw"->0},
         2 -> {"pin"->"234", "accountN"->12346, "withdraw"->0},
-        3 -> {"pin"->"345", "accountN"->12345, "withdraw"->0}} to dbCards
+        3 -> {"pin"->"345", "accountN"->12345, "withdraw"->0},
+        4 -> {"pin"->"456", "accountN"->12347, "withdraw"->0}} to dbCards
+        
+        UserCardQueue := []
+        add 1 to UserCardQueue
+        add 2 to UserCardQueue
+        add 3 to UserCardQueue
+        add 4 to UserCardQueue
+        
+        InvalidCards := []
+        add 2 to InvalidCards
         
         endseqblock
         selectTill(tillControl1) := till1
@@ -75,7 +95,6 @@ par
 	        program(tillControl2):=@TillControl
 	        program(tillControl3):=@TillControl
 	        program(centralNetwork):=@CentralNetworkControl
-	//        program(observer):=@ObserverProgram
 	        program(environment):=@EnvironmentProgram
         endseqblock
 endpar
@@ -83,23 +102,35 @@ endpar
 rule TillControl =
 par
 	t := selectTill(self)
-	
-    if tillStatus(t) != Processing then
+
+    if tillStatus(t) != Processing then {
         if cardStatus(t) = Empty then
                 print t + " - Please insert card"
         else if cardStatus(t) = Inserted then
                 if tillStatus(t) = Available then
                 seqblock
-                		ProcessLogin(t)
-                		userOperation(t) := LogIn
+            			card := ValidateCard(t)
+            			if card != undef then seqblock 
+            				ProcessLogin(t)
+            				userOperation(t) := LogIn
+            			endseqblock
+            			else {
+            				print "Card is invalid, ATM is keeping the card"
+            				KeepCard(t)
+        				}
                 endseqblock
                 else
-                        //Get Operation
                         if tillStatus(t) = InUse then
-                                GetOperation(t)                                                
+                                GetOperation(t)     
+	}
 endpar
 
-// Process input f
+rule ValidateCard(t) =
+	return card in
+		choose c in InvalidCards with c = cardNumber(t) do
+			card := c 
+
+// Process input
 rule ProcessLogin(t) = 
         seqblock
         		seq
@@ -127,6 +158,7 @@ rule ProcessLogin(t) =
 
 rule KeepCard(t) =
         par
+        		add cardNumber(t) to InvalidCards
                 ResetTill(t)
                 print "Card is kept by this ATM"
         endpar
@@ -171,12 +203,31 @@ seqblock
                 tillStatus(currentTill) := InUse
         endseqblock
         else if userOperation(currentTill) = Withdraw then seqblock
-                print "Withdraw"
+        	if operation = "Confirm Withdraw" then seqblock
+        		print "Withdraw Successful"
+                tillStatus(currentTill) := InUse
+        	endseqblock
+        	else seqblock
+	        	if operation = "Success" then seqblock
+	        		userOperation(currentTill) := "ConfirmWithdraw"
+	        		PushToInQueue(currentTill)
+	        	endseqblock
+	        	else if operation = "Limit Exceeded" then seqblock
+	        		print "You have exceeded your daily Limit"
+	                tillStatus(currentTill) := InUse
+	        	endseqblock
+	        	else seqblock
+	        		print "Insufficient funds in your account"
+	                tillStatus(currentTill) := InUse
+	        	endseqblock
+			endseqblock
         endseqblock
         else if userOperation(currentTill) = RequestStatement then seqblock
                 print "A mail will be sent to " + operation
                 tillStatus(currentTill) := InUse
         endseqblock
+        else
+        	tillStatus(currentTill) := InUse
 endseqblock
 
 rule toOperation(userInput) = 
@@ -193,30 +244,45 @@ seqblock
             	PushToOutQueue([currentTill, accountMap()("balance")])
         endseqblock
         else if userOperation(currentTill) = Withdraw then seqblock
+        		print "Withdraw"
 				cardInfo := dbCards()(cardNumber(currentTill))
-                accountMap(t) := dbAccounts()(cardInfo()("accountN"))
+                accountMap(currentTill) := dbAccounts()(cardInfo()("accountN"))
                 
-                if (cardInfo()("withdraw") + 100 > accountMap()("withdrawLimit")) then seqblock
-                	PushToOutQueue([currentTill, "Limit Exceeded"])
+                if (accountMap(currentTill)("balance") >= 100) then seqblock
+                	if (cardInfo()("withdraw") + 100 > accountMap(currentTill)("withdrawLimit")) then seqblock
+                		PushToOutQueue([currentTill, "Limit Exceeded"])
+                	endseqblock
+                	else seqblock
+                		PushToOutQueue([currentTill, "Success"])
+                	endseqblock
                 endseqblock
                 else seqblock
-                	PushToOutQueue([currentTill, "Success"])
-                endseqblock
+                		PushToOutQueue([currentTill, "Insufficient Funds"])
+                endseqblock 
         endseqblock
-        else if userOperation(currentTill) = ConfirmWithdraw then seqblock
+        else if userOperation(currentTill) = "ConfirmWithdraw" then seqblock
+        		print "Confirming Withdraw"
         		cardInfo := dbCards()(cardNumber(currentTill))
+        		accountMap(currentTill) := dbAccounts()(cardInfo()("accountN"))
+        		
                 updateWithdraw := cardInfo()("withdraw")
                 updateWithdraw := updateWithdraw + 100
                 remove cardNumber(currentTill) from dbCards
-                
                 add {cardNumber(currentTill) -> {"pin"->cardInfo()("pin"), "accountN"->cardInfo()("accountN"), "withdraw"->updateWithdraw}} to dbCards
+                
+                newBalance := accountMap(currentTill)("balance")
+                newBalance := newBalance-100
+                
+                remove cardNumber(currentTill) from dbAccounts
+        		add {cardInfo()("accountN") -> {"pin"-> accountMap(currentTill)("pin"), "address"->accountMap(currentTill)("address"), "balance"->newBalance, "withdrawLimit"->accountMap(currentTill)("withdrawLimit")}} to dbAccounts
+                
                 PushToOutQueue([currentTill, "Confirm Withdraw"]) 
         endseqblock
         else if userOperation(currentTill) = RequestStatement then seqblock
                 cardInfo := dbCards()(cardNumber(currentTill))
-                accountMap := dbAccounts()(cardInfo()("accountN"))
+                accountMap(currentTill) := dbAccounts()(cardInfo()("accountN"))
 				
-				PushToOutQueue([currentTill, accountMap()("address")])                
+				PushToOutQueue([currentTill, accountMap(currentTill)("address")])                
         endseqblock
 endseqblock
 
@@ -245,11 +311,6 @@ par
 	enqueue x into OutQueue
 endpar
 
-/*rule ObserverProgram =
-{
-
-} */
-
 rule EnvironmentProgram =
 par
         choose t in till do
@@ -257,13 +318,16 @@ par
         //Simulating user interaction
                 if cardStatus(t) = Remove then par
                         print "User has removed a card"
+                        add cardNumber(t) to UserCardQueue
                         ResetTill(t)
                 endpar
                 else if (tillStatus(t) = Available and cardStatus(t) = Empty) then seqblock
-                        print "User has inserted a card into " + t
                         cardStatus(t) := Inserted
-                        choose x in [1,2,3] do 
+                        choose x in UserCardQueue do par
+                        	remove x from UserCardQueue 
                         	cardNumber(t) := x
+                    	endpar
+                        print "User has inserted a card number " + cardNumber(t) + " into " + t
                 endseqblock
         endpar
 endpar
